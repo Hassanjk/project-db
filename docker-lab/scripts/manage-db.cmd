@@ -63,6 +63,19 @@ set /p TARGET_USER=Username:
 set /p TARGET_PASS=Password (required): 
 set /p DB_NAME=Database name: 
 
+:ask_db
+if "%DB_NAME%"=="" goto done
+set "DB_EXISTS="
+for /f "usebackq delims=" %%D in (`docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -N -s -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='!DB_NAME!';"`) do (
+  set "DB_EXISTS=1"
+)
+
+if not defined DB_EXISTS (
+  echo Database '!DB_NAME!' does not exist. Enter a valid database name.
+  set /p DB_NAME=Database name: 
+  goto ask_db
+)
+
 if "%TARGET_PASS%"=="" (
   echo Password is required.
   goto done

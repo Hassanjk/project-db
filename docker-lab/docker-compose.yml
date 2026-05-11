@@ -1,48 +1,6 @@
 name: portscan-lab
 
 services:
-  scanner:
-    image: nicolaka/netshoot:latest
-    command: ["sleep", "infinity"]
-    networks:
-      labnet:
-        ipv4_address: 172.28.0.10
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-
-  banner:
-    build:
-      context: ./services/banner
-    networks:
-      labnet:
-        ipv4_address: 172.28.0.22
-    ports:
-      - "2222:2222"
-    restart: unless-stopped
-
-  auth-demo:
-    build:
-      context: ./services/auth-demo
-    networks:
-      labnet:
-        ipv4_address: 172.28.0.50
-    ports:
-      - "5000:5000"
-    restart: unless-stopped
-
-  web-demo:
-    image: python:3.12-alpine
-    command: ["python", "-m", "http.server", "8000", "--directory", "/srv"]
-    volumes:
-      - ./services/web-demo:/srv:ro
-    networks:
-      labnet:
-        ipv4_address: 172.28.0.80
-    ports:
-      - "8000:8000"
-    restart: unless-stopped
-
   mariadb-demo:
     image: mariadb:10.6.17
     environment:

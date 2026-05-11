@@ -42,15 +42,35 @@ goto done
 set /p NEW_USER=New username: 
 set /p NEW_PASS=New password: 
 set /p DB_NAME=Database name: 
-set /p PRIVS=Privileges (comma-separated or ALL): 
+echo Choose privileges by number (comma-separated):
+echo   1=SELECT  2=INSERT  3=UPDATE  4=DELETE  5=CREATE
+echo   6=ALTER   7=DROP    8=INDEX   9=EXECUTE 10=ALL
+set /p PRIVS_NUM=Enter numbers (default 1,2,3,4): 
 
-if "%PRIVS%"=="" set "PRIVS=SELECT,INSERT,UPDATE,DELETE"
+if "%PRIVS_NUM%"=="" set "PRIVS_NUM=1,2,3,4"
 
-set "PRIVS_UPPER=%PRIVS%"
-for %%A in (ALL ALLPRIVILEGES) do (
-  if /i "!PRIVS_UPPER!"=="%%A" set "PRIVS_SQL=ALL PRIVILEGES"
+set "PRIVS_SQL="
+set "HAS_ALL="
+for %%N in (%PRIVS_NUM%) do (
+  if "%%N"=="10" set "HAS_ALL=1"
+  if /i "%%N"=="all" set "HAS_ALL=1"
 )
-if not defined PRIVS_SQL set "PRIVS_SQL=%PRIVS%"
+
+if defined HAS_ALL (
+  set "PRIVS_SQL=ALL PRIVILEGES"
+) else (
+  for %%N in (%PRIVS_NUM%) do (
+    if "%%N"=="1" call :add_priv SELECT
+    if "%%N"=="2" call :add_priv INSERT
+    if "%%N"=="3" call :add_priv UPDATE
+    if "%%N"=="4" call :add_priv DELETE
+    if "%%N"=="5" call :add_priv CREATE
+    if "%%N"=="6" call :add_priv ALTER
+    if "%%N"=="7" call :add_priv DROP
+    if "%%N"=="8" call :add_priv INDEX
+    if "%%N"=="9" call :add_priv EXECUTE
+  )
+)
 
 echo Allow this user to connect from other networks? (y/n):
 set /p ALLOW_OTHER=
@@ -66,6 +86,14 @@ set "HOST=%~1"
 set "USER_SQL=CREATE USER IF NOT EXISTS '!NEW_USER!'@'!HOST!' IDENTIFIED BY '!NEW_PASS!'; GRANT !PRIVS_SQL! ON `!DB_NAME!`.* TO '!NEW_USER!'@'!HOST!'; FLUSH PRIVILEGES;"
 
 docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "%USER_SQL%"
+exit /b 0
+
+:add_priv
+if defined PRIVS_SQL (
+  set "PRIVS_SQL=!PRIVS_SQL!,%~1"
+) else (
+  set "PRIVS_SQL=%~1"
+)
 exit /b 0
 
 :done

@@ -3,6 +3,7 @@ setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "COMPOSE_FILE=%SCRIPT_DIR%..\docker-compose.yml"
+set "PMA_HOST=172.28.0.33"
 
 where docker >nul 2>&1
 if errorlevel 1 (
@@ -54,7 +55,7 @@ if /i "%CONFIRM_DELETE%"=="yes" goto do_delete
 goto done
 
 :do_delete
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "DROP USER IF EXISTS '%DELETE_USER%'@'%'; DROP USER IF EXISTS '%DELETE_USER%'@'phpmyadmin-demo'; DROP USER IF EXISTS '%DELETE_USER%'@'localhost'; FLUSH PRIVILEGES;"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "DROP USER IF EXISTS '%DELETE_USER%'@'%'; DROP USER IF EXISTS '%DELETE_USER%'@'%PMA_HOST%'; DROP USER IF EXISTS '%DELETE_USER%'@'localhost'; FLUSH PRIVILEGES;"
 goto done
 
 :manage_user
@@ -103,13 +104,13 @@ set "ALLOW_OTHER_FLAG=0"
 if /i "%ALLOW_OTHER%"=="y" set "ALLOW_OTHER_FLAG=1"
 if /i "%ALLOW_OTHER%"=="yes" set "ALLOW_OTHER_FLAG=1"
 
-call :manage_user_for_host "phpmyadmin-demo"
+call :manage_user_for_host "%PMA_HOST%"
 if "%ALLOW_OTHER_FLAG%"=="1" call :manage_user_for_host "%"
 
 if "%ALLOW_OTHER_FLAG%"=="1" (
-  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('phpmyadmin-demo', '%')"
+  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('%PMA_HOST%', '%')"
 ) else (
-  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('phpmyadmin-demo')"
+  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('%PMA_HOST%')"
 )
 
 docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "!DELETE_HOSTS!; FLUSH PRIVILEGES;"
@@ -132,5 +133,7 @@ if defined PRIVS_SQL (
 exit /b 0
 
 :done
+echo Current users:
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "SELECT User, Host FROM mysql.user ORDER BY User, Host;"
 echo Done.
 endlocal

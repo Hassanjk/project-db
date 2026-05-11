@@ -20,12 +20,15 @@ if not defined MARIADB_RUNNING (
   exit /b 1
 )
 
-set /p ADMIN_USER=Admin username: 
+set /p SUPER_USER=Privileged username (e.g., root): 
+set /p SUPER_PASS=Privileged password: 
+
+set /p ADMIN_USER=Admin username to restrict (e.g., demo): 
 set /p ADMIN_PASS=Admin password: 
 
 set "ADMIN_SQL=CREATE USER IF NOT EXISTS '!ADMIN_USER!'@'localhost' IDENTIFIED BY '!ADMIN_PASS!'; GRANT ALL PRIVILEGES ON *.* TO '!ADMIN_USER!'@'localhost' WITH GRANT OPTION; DELETE FROM mysql.user WHERE User='!ADMIN_USER!' AND Host NOT IN ('localhost'); FLUSH PRIVILEGES;"
 
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%ADMIN_USER%" -p"%ADMIN_PASS%" -e "%ADMIN_SQL%"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "%ADMIN_SQL%"
 if errorlevel 1 exit /b 1
 
 echo Create a new user? (y/n):
@@ -62,7 +65,7 @@ goto done
 set "HOST=%~1"
 set "USER_SQL=CREATE USER IF NOT EXISTS '!NEW_USER!'@'!HOST!' IDENTIFIED BY '!NEW_PASS!'; GRANT !PRIVS_SQL! ON `!DB_NAME!`.* TO '!NEW_USER!'@'!HOST!'; FLUSH PRIVILEGES;"
 
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%ADMIN_USER%" -p"%ADMIN_PASS%" -e "%USER_SQL%"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "%USER_SQL%"
 exit /b 0
 
 :done

@@ -133,7 +133,28 @@ if defined PRIVS_SQL (
 exit /b 0
 
 :done
-echo Current users:
+echo Check user privileges? (y/n):
+set /p CHECK_PRIVS=
+if /i "%CHECK_PRIVS%"=="y" goto show_privs
+if /i "%CHECK_PRIVS%"=="yes" goto show_privs
+goto maybe_list_users
+
+:show_privs
+set /p PRIV_USER=Username to check: 
+set /p PRIV_HOST=Host for this user (default %PMA_HOST%): 
+if "%PRIV_HOST%"=="" set "PRIV_HOST=%PMA_HOST%"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "SHOW GRANTS FOR '%PRIV_USER%'@'%PRIV_HOST%';"
+
+:maybe_list_users
+echo Show all users? (y/n):
+set /p SHOW_USERS=
+if /i "%SHOW_USERS%"=="y" goto list_users
+if /i "%SHOW_USERS%"=="yes" goto list_users
+goto finish
+
+:list_users
 docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "SELECT User, Host FROM mysql.user ORDER BY User, Host;"
+
+:finish
 echo Done.
 endlocal

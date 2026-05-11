@@ -1,0 +1,105 @@
+name: portscan-lab
+
+services:
+  scanner:
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "infinity"]
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.10
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  banner:
+    build:
+      context: ./services/banner
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.22
+    ports:
+      - "2222:2222"
+    restart: unless-stopped
+
+  auth-demo:
+    build:
+      context: ./services/auth-demo
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.50
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  web-demo:
+    image: python:3.12-alpine
+    command: ["python", "-m", "http.server", "8000", "--directory", "/srv"]
+    volumes:
+      - ./services/web-demo:/srv:ro
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.80
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  mariadb-demo:
+    image: mariadb:10.6.17
+    environment:
+      MARIADB_ROOT_PASSWORD: "123456"
+      MARIADB_ROOT_HOST: "%"
+      MARIADB_DATABASE: "classdemo"
+      MARIADB_USER: "demo"
+      MARIADB_PASSWORD: "demo123"
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.30
+    ports:
+      - 127.0.0.1:3306:3306
+    restart: unless-stopped
+
+  php-fpm-demo:
+    image: php:8.3-fpm
+    volumes:
+      - ./services/php-app:/var/www/html:ro
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.31
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+
+  nginx-php-demo:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./services/php-app:/var/www/html:ro
+      - ./services/nginx-php/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - php-fpm-demo
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.32
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+
+  phpmyadmin-demo:
+    image: phpmyadmin:latest
+    environment:
+      PMA_HOST: mariadb-demo
+      PMA_PORT: 3306
+    depends_on:
+      - mariadb-demo
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.33
+    ports:
+      - "8082:80"
+    restart: unless-stopped
+
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

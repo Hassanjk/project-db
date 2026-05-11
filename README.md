@@ -1,4 +1,4 @@
 ```
 cd docker-lab
-docker compose up -d
+docker compose up -d --build mariadb-demo
 ```

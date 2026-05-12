@@ -257,7 +257,7 @@ mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -N -s ^
 -e "SELECT 1 FROM mysql.user WHERE User='!U!' AND Host='!H!' LIMIT 1;" > "!TMP!"
 
 set "EXISTS="
-for /f %%A in (!TMP!) do set "EXISTS=1"
+for /f "usebackq delims=" %%A in ("!TMP!") do set "EXISTS=1"
 del "!TMP!" >nul 2>&1
 
 if defined EXISTS (

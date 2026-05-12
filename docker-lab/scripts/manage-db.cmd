@@ -44,7 +44,8 @@ echo 2 - Update User
 echo 3 - Delete User
 echo 4 - Show User Privileges
 echo 5 - List Users
-echo 6 - Exit
+echo 6 - Delete All Users (Except Root)
+echo 7 - Exit
 echo ============================================
 set /p CHOICE=Choose: 
 
@@ -53,7 +54,8 @@ if "!CHOICE!"=="2" goto update_user
 if "!CHOICE!"=="3" goto delete_user
 if "!CHOICE!"=="4" goto show_privs
 if "!CHOICE!"=="5" goto list_users
-if "!CHOICE!"=="6" goto end
+if "!CHOICE!"=="6" goto delete_all_users
+if "!CHOICE!"=="7" goto end
 
 goto menu
 
@@ -167,7 +169,7 @@ set "SQL=!SQL! FLUSH PRIVILEGES;"
 
 docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
 mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -e
-[5/12/2026 8:26 PM] R.Kourani: "!SQL!"
+"!SQL!"
 
 exit /b
 
@@ -291,6 +293,32 @@ docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
 mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" ^
 -e "SELECT User, Host FROM mysql.user ORDER BY User, Host;"
 
+goto menu
+
+
+:: =========================================================
+:: DELETE ALL USERS (EXCEPT ROOT + SYSTEM)
+:: =========================================================
+:delete_all_users
+echo.
+echo This will delete all users except: root, mariadb.sys, mysql.sys, mysql.session, healthcheck
+set /p CONFIRM=Type DELETE to continue: 
+if /i not "!CONFIRM!"=="DELETE" goto menu
+
+set "TMP=%TEMP%\mariadb_drop_all.sql"
+
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -N -s ^
+-e "SELECT CONCAT('DROP USER IF EXISTS ''',User,'''@''',Host,''';') FROM mysql.user WHERE User NOT IN ('root','mariadb.sys','mysql.sys','mysql.session','healthcheck');" > "!TMP!"
+
+echo FLUSH PRIVILEGES;>> "!TMP!"
+
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" < "!TMP!"
+
+del "!TMP!" >nul 2>&1
+
+echo Users deleted.
 goto menu
 
 

@@ -1,4 +1,4 @@
-@echo off
+ @echo off
 setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
@@ -7,167 +7,296 @@ set "PMA_HOST=172.28.0.33"
 
 where docker >nul 2>&1
 if errorlevel 1 (
-  echo docker is required but was not found in PATH.
+  echo Docker not found in PATH.
   exit /b 1
 )
 
-for /f "usebackq delims=" %%S in (`docker compose -f "%COMPOSE_FILE%" ps --status running --services`) do (
-  if /i "%%S"=="mariadb-demo" set "MARIADB_RUNNING=1"
-)
-
-if not defined MARIADB_RUNNING (
-  echo MariaDB is not running. Start it with:
-  echo   docker compose -f "%COMPOSE_FILE%" up -d
+docker compose -f "%COMPOSE_FILE%" ps | findstr "mariadb-demo" >nul
+if errorlevel 1 (
+  echo MariaDB is not running.
   exit /b 1
 )
 
-echo Enter privileged credentials first (used for all SQL changes).
-set /p SUPER_USER=Privileged username (e.g., root): 
-set /p SUPER_PASS=Privileged password: 
-
-echo Enter the admin account to restrict (this account will be localhost-only).
-set /p ADMIN_USER=Target admin username (e.g., demo): 
-set /p ADMIN_PASS=Target admin password: 
-
-set "ADMIN_SQL=CREATE USER IF NOT EXISTS '!ADMIN_USER!'@'localhost' IDENTIFIED BY '!ADMIN_PASS!'; GRANT ALL PRIVILEGES ON *.* TO '!ADMIN_USER!'@'localhost' WITH GRANT OPTION; DELETE FROM mysql.user WHERE User='!ADMIN_USER!' AND Host NOT IN ('localhost'); FLUSH PRIVILEGES;"
-
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "%ADMIN_SQL%"
-if errorlevel 1 exit /b 1
-
-echo Manage a user? (c=create, u=update, d=delete, n=skip):
-set /p USER_ACTION=
-if /i "%USER_ACTION%"=="c" goto manage_user
-if /i "%USER_ACTION%"=="create" goto manage_user
-if /i "%USER_ACTION%"=="u" goto manage_user
-if /i "%USER_ACTION%"=="update" goto manage_user
-if /i "%USER_ACTION%"=="d" goto delete_user
-if /i "%USER_ACTION%"=="delete" goto delete_user
-
-goto done
-
-:delete_user
-set /p DELETE_USER=Username to delete: 
-if "%DELETE_USER%"=="" goto done
-echo Are you sure you want to delete %DELETE_USER%? (y/n):
-set /p CONFIRM_DELETE=
-if /i "%CONFIRM_DELETE%"=="y" goto do_delete
-if /i "%CONFIRM_DELETE%"=="yes" goto do_delete
-goto done
-
-:do_delete
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "DROP USER IF EXISTS '%DELETE_USER%'@'%'; DROP USER IF EXISTS '%DELETE_USER%'@'%PMA_HOST%'; DROP USER IF EXISTS '%DELETE_USER%'@'localhost'; FLUSH PRIVILEGES;"
-goto done
-
-:manage_user
-set /p TARGET_USER=Username: 
-set /p TARGET_PASS=Password (required): 
-set /p DB_NAME=Database name: 
-
-:ask_db
-if "%DB_NAME%"=="" goto done
-set "DB_EXISTS="
-for /f "usebackq delims=" %%D in (`docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -N -s -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='!DB_NAME!';"`) do (
-  set "DB_EXISTS=1"
+docker compose -f "%COMPOSE_FILE%" port mariadb-demo 3306 | findstr /r "^0\.0\.0\.0:3306" >nul
+if errorlevel 1 (
+  echo MariaDB is not bound to 0.0.0.0:3306 on the host.
+  echo Check your docker-compose port mapping for the mariadb-demo service.
+  exit /b 1
 )
 
-if not defined DB_EXISTS (
-  echo Database '!DB_NAME!' does not exist. Enter a valid database name.
-  set /p DB_NAME=Database name: 
-  goto ask_db
+echo Enter privileged credentials:
+set /p SUPER_USER=User (root): 
+set /p SUPER_PASS=Password: 
+
+goto menu
+
+
+:: =========================================================
+:: MENU
+:: =========================================================
+:menu
+echo.
+echo ============================================
+echo           DATABASE ADMIN MENU
+echo ============================================
+echo 1 - Create User
+echo 2 - Update User
+echo 3 - Delete User
+echo 4 - Show User Privileges
+echo 5 - List Users
+echo 6 - Exit
+echo ============================================
+set /p CHOICE=Choose: 
+
+if "!CHOICE!"=="1" goto create_user
+if "!CHOICE!"=="2" goto update_user
+if "!CHOICE!"=="3" goto delete_user
+if "!CHOICE!"=="4" goto show_privs
+if "!CHOICE!"=="5" goto list_users
+if "!CHOICE!"=="6" goto end
+
+goto menu
+
+
+:: =========================================================
+:: CREATE USER
+:: =========================================================
+:create_user
+set /p USER=Username: 
+set /p PASS=Password: 
+set /p DB=Database: 
+
+set "HOSTS=!PMA_HOST!"
+set /p EXT=Allow external access? (y/n): 
+if /i "!EXT!"=="y" set "HOSTS=!HOSTS! %%"
+
+call :set_privs
+
+for %%H in (!HOSTS!) do (
+  call :apply_user "!USER!" "!PASS!" "%%H" "!DB!"
 )
 
-if "%TARGET_PASS%"=="" (
-  echo Password is required.
-  goto done
-)
-echo Choose privileges by number (comma-separated):
-echo   1=SELECT  2=INSERT  3=UPDATE  4=DELETE  5=CREATE
-echo   6=ALTER   7=DROP    8=INDEX   9=EXECUTE 10=ALL
-set /p PRIVS_NUM=Enter numbers (default 1,2,3,4): 
+goto menu
 
-if "%PRIVS_NUM%"=="" set "PRIVS_NUM=1,2,3,4"
 
-set "PRIVS_SQL="
-set "HAS_ALL="
-for %%N in (%PRIVS_NUM%) do (
-  if "%%N"=="10" set "HAS_ALL=1"
-  if /i "%%N"=="all" set "HAS_ALL=1"
-)
+:: =========================================================
+:: UPDATE USER (FIXED VERSION)
+:: =========================================================
+:update_user
+set /p OLD_USER=Current username: 
 
-if defined HAS_ALL (
-  set "PRIVS_SQL=ALL PRIVILEGES"
-) else (
-  for %%N in (%PRIVS_NUM%) do (
-    if "%%N"=="1" call :add_priv SELECT
-    if "%%N"=="2" call :add_priv INSERT
-    if "%%N"=="3" call :add_priv UPDATE
-    if "%%N"=="4" call :add_priv DELETE
-    if "%%N"=="5" call :add_priv CREATE
-    if "%%N"=="6" call :add_priv ALTER
-    if "%%N"=="7" call :add_priv DROP
-    if "%%N"=="8" call :add_priv INDEX
-    if "%%N"=="9" call :add_priv EXECUTE
+set /p NEW_USER=New username (or same): 
+if "!NEW_USER!"=="" set "NEW_USER=!OLD_USER!"
+
+set /p PASS=New password (empty = keep): 
+set /p DB=Database: 
+
+set "HOSTS=!PMA_HOST!"
+set /p EXT=Allow external access? (y/n): 
+if /i "!EXT!"=="y" set "HOSTS=!HOSTS! %%"
+
+call :set_privs
+
+
+:: --- rename safely per host ---
+if not "!OLD_USER!"=="!NEW_USER!" (
+  for %%H in (!HOSTS!) do (
+    docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+    mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" ^
+    -e "RENAME USER '!OLD_USER!'@'%%H' TO '!NEW_USER!'@'%%H';"
   )
 )
 
-echo Allow this user to connect from other networks? (y/n):
-set /p ALLOW_OTHER=
 
-set "ALLOW_OTHER_FLAG=0"
-if /i "%ALLOW_OTHER%"=="y" set "ALLOW_OTHER_FLAG=1"
-if /i "%ALLOW_OTHER%"=="yes" set "ALLOW_OTHER_FLAG=1"
-
-call :manage_user_for_host "%PMA_HOST%"
-if "%ALLOW_OTHER_FLAG%"=="1" call :manage_user_for_host "%"
-
-if "%ALLOW_OTHER_FLAG%"=="1" (
-  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('%PMA_HOST%', '%')"
-) else (
-  set "DELETE_HOSTS=DELETE FROM mysql.user WHERE User='!TARGET_USER!' AND Host NOT IN ('%PMA_HOST%')"
+:: --- reapply settings ---
+for %%H in (!HOSTS!) do (
+  call :apply_update "!NEW_USER!" "!PASS!" "%%H" "!DB!"
 )
 
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "!DELETE_HOSTS!; FLUSH PRIVILEGES;"
+goto menu
 
-goto done
 
-:manage_user_for_host
-set "HOST=%~1"
-set "USER_SQL=CREATE USER IF NOT EXISTS '!TARGET_USER!'@'!HOST!' IDENTIFIED BY '!TARGET_PASS!'; REVOKE ALL PRIVILEGES, GRANT OPTION FROM '!TARGET_USER!'@'!HOST!'; GRANT !PRIVS_SQL! ON `!DB_NAME!`.* TO '!TARGET_USER!'@'!HOST!'; FLUSH PRIVILEGES;"
+:: =========================================================
+:: DELETE USER
+:: =========================================================
+:delete_user
+set /p USER=Username to delete: 
 
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "%USER_SQL%"
-exit /b 0
+set "SQL=DROP USER IF EXISTS '!USER!'@'%%'; DROP USER IF EXISTS '!USER!'@'!PMA_HOST!'; DROP USER IF EXISTS '!USER!'@'localhost'; FLUSH PRIVILEGES;"
 
-:add_priv
-if defined PRIVS_SQL (
-  set "PRIVS_SQL=!PRIVS_SQL!,%~1"
-) else (
-  set "PRIVS_SQL=%~1"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -e "!SQL!"
+
+echo User deleted.
+goto menu
+
+
+:: =========================================================
+:: APPLY USER (CREATE / UPDATE CORE)
+:: =========================================================
+:apply_user
+set "U=%~1"
+set "P=%~2"
+set "H=%~3"
+set "DB=%~4"
+
+set "SQL=CREATE USER IF NOT EXISTS '!U!'@'!H!' IDENTIFIED BY '!P!';"
+set "SQL=!SQL! REVOKE ALL PRIVILEGES, GRANT OPTION FROM '!U!'@'!H!';"
+set "SQL=!SQL! GRANT !PRIVS! ON `!DB!`.* TO '!U!'@'!H!';"
+set "SQL=!SQL! FLUSH PRIVILEGES;"
+
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -e "!SQL!"
+
+exit /b
+
+
+:: =========================================================
+:: APPLY UPDATE (SAFE VERSION)
+:: =========================================================
+:apply_update
+set "U=%~1"
+set "P=%~2"
+set "H=%~3"
+set "DB=%~4"
+
+set "SQL=CREATE USER IF NOT EXISTS '!U!'@'!H!' IDENTIFIED BY '!P!';"
+set "SQL=!SQL! REVOKE ALL PRIVILEGES, GRANT OPTION FROM '!U!'@'!H!';"
+set "SQL=!SQL! GRANT !PRIVS! ON `!DB!`.* TO '!U!'@'!H!';"
+set "SQL=!SQL! FLUSH PRIVILEGES;"
+
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -e
+[5/12/2026 8:26 PM] R.Kourani: "!SQL!"
+
+exit /b
+
+
+:: =========================================================
+:: PRIVILEGES
+:: =========================================================
+:set_privs
+echo Privileges:
+echo 1=SELECT 2=INSERT 3=UPDATE 4=DELETE 5=CREATE
+echo 6=ALTER 7=DROP 8=INDEX 9=EXECUTE 10=ALL
+set /p P=Enter: 
+
+set "PRIVS="
+set "ALL=0"
+
+for %%X in (!P!) do (
+  if "%%X"=="10" set "ALL=1"
 )
-exit /b 0
 
-:done
-echo Check user privileges? (y/n):
-set /p CHECK_PRIVS=
-if /i "%CHECK_PRIVS%"=="y" goto show_privs
-if /i "%CHECK_PRIVS%"=="yes" goto show_privs
-goto maybe_list_users
+if "!ALL!"=="1" (
+  set "PRIVS=ALL PRIVILEGES"
+  exit /b
+)
 
+for %%X in (!P!) do (
+  if "%%X"=="1" call :add SELECT
+  if "%%X"=="2" call :add INSERT
+  if "%%X"=="3" call :add UPDATE
+  if "%%X"=="4" call :add DELETE
+  if "%%X"=="5" call :add CREATE
+  if "%%X"=="6" call :add ALTER
+  if "%%X"=="7" call :add DROP
+  if "%%X"=="8" call :add INDEX
+  if "%%X"=="9" call :add EXECUTE
+)
+
+exit /b
+
+
+:add
+if defined PRIVS (
+  set "PRIVS=!PRIVS!,%~1"
+) else (
+  set "PRIVS=%~1"
+)
+exit /b
+
+
+:: =========================================================
+:: SHOW PRIVILEGES (FIXED + STABLE)
+:: =========================================================
 :show_privs
-set /p PRIV_USER=Username to check: 
-set /p PRIV_HOST=Host for this user (default %PMA_HOST%): 
-if "%PRIV_HOST%"=="" set "PRIV_HOST=%PMA_HOST%"
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "SHOW GRANTS FOR '%PRIV_USER%'@'%PRIV_HOST%';"
+set /p USER=Username: 
 
-:maybe_list_users
-echo Show all users? (y/n):
-set /p SHOW_USERS=
-if /i "%SHOW_USERS%"=="y" goto list_users
-if /i "%SHOW_USERS%"=="yes" goto list_users
-goto finish
+echo.
+echo ============================================
+echo       USER ACCESS REPORT
+echo ============================================
+echo User: !USER!
+echo.
 
+set "FOUND=0"
+
+call :check_host "!USER!" "localhost"
+call :check_host "!USER!" "!PMA_HOST!"
+call :check_host "!USER!" "%%"
+
+if "!FOUND!"=="0" echo User not found.
+
+goto menu
+
+
+:: =========================================================
+:: SAFE HOST CHECK (NO BACKTICKS - NO ERRORS)
+:: =========================================================
+:check_host
+set "U=%~1"
+set "H=%~2"
+
+set "TMP=%TEMP%\mariadb_check.txt"
+
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" -N -s ^
+-e "SELECT 1 FROM mysql.user WHERE User='!U!' AND Host='!H!' LIMIT 1;" > "!TMP!"
+
+set "EXISTS="
+for /f %%A in (!TMP!) do set "EXISTS=1"
+del "!TMP!" >nul 2>&1
+
+if defined EXISTS (
+
+  set "FOUND=1"
+
+  echo --------------------------------------------
+  echo Host: !H!
+
+  if "!H!"=="localhost" echo Access: Local only
+  if "!H!"=="!PMA_HOST!" echo Access: Internal network
+  if "!H!"=="%" echo Access: External access
+
+  echo.
+  echo GRANTS:
+  echo --------------------------------------------
+
+  docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+  mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" ^
+  -e "SHOW GRANTS FOR '!U!'@'!H!';"
+
+  echo.
+)
+
+exit /b
+
+
+:: =========================================================
+:: LIST USERS
+:: =========================================================
 :list_users
-docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo mysql -u "%SUPER_USER%" -p"%SUPER_PASS%" -e "SELECT User, Host FROM mysql.user ORDER BY User, Host;"
+docker compose -f "%COMPOSE_FILE%" exec -T mariadb-demo ^
+mysql -u "!SUPER_USER!" -p"!SUPER_PASS!" ^
+-e "SELECT User, Host FROM mysql.user ORDER BY User, Host;"
 
-:finish
-echo Done.
+goto menu
+
+
+:: =========================================================
+:: EXIT
+:: =========================================================
+:end
+echo Bye
 endlocal

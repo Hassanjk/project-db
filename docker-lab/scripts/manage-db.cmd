@@ -249,6 +249,7 @@ goto menu
 :check_host
 set "U=%~1"
 set "H=%~2"
+set "EXTERNAL_HOST=%%"
 
 set "TMP=%TEMP%\mariadb_check.txt"
 
@@ -269,7 +270,7 @@ if defined EXISTS (
 
   if "!H!"=="localhost" echo Access: Local only
   if "!H!"=="!PMA_HOST!" echo Access: Internal network
-  if "!H!"=="%" echo Access: External access
+  if "!H!"=="!EXTERNAL_HOST!" echo Access: External access
 
   echo.
   echo GRANTS:
